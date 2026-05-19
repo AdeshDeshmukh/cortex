@@ -8,10 +8,19 @@ import (
 	"strings"
 )
 
-const preCommitHook = `#!/bin/bash
+const preCommitHookTemplate = `#!/bin/bash
 set -e
 
-cortex review --hook
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CORTEX_BIN="$REPO_ROOT/cortex"
+
+if [ ! -f "$CORTEX_BIN" ]; then
+    echo "⚠️  Cortex binary not found at $CORTEX_BIN"
+    echo "   Run 'make build' to create it"
+    exit 1
+fi
+
+"$CORTEX_BIN" review --hook
 EXIT_CODE=$?
 
 case $EXIT_CODE in
@@ -57,7 +66,7 @@ func (h *HookManager) Install(force bool) error {
 		return fmt.Errorf("pre-commit hook exists (use --force to overwrite)")
 	}
 
-	if err := os.WriteFile(hookPath, []byte(preCommitHook), 0755); err != nil {
+	if err := os.WriteFile(hookPath, []byte(preCommitHookTemplate), 0755); err != nil {
 		return fmt.Errorf("write hook: %w", err)
 	}
 
@@ -98,7 +107,7 @@ func (h *HookManager) hookExists() (exists bool, isOurs bool) {
 		return false, false
 	}
 
-	return true, strings.TrimSpace(string(content)) == strings.TrimSpace(preCommitHook)
+	return true, strings.TrimSpace(string(content)) == strings.TrimSpace(preCommitHookTemplate)
 }
 
 func isGitRepo(path string) bool {
