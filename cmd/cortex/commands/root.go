@@ -1,8 +1,6 @@
 package commands
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
@@ -23,9 +21,7 @@ Built from first principles to understand code deeply.
 
 Example usage:
   cortex install          Install git hooks in current repo
-  cortex review           Review current changes
-  cortex config           Configure cortex settings
-  cortex train            Train personalized model`,
+  cortex review           Review current changes`,
 	Version: Version,
 }
 
@@ -36,12 +32,4 @@ func Execute() error {
 func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: .cortex.yml)")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
-
-	rootCmd.Flags().BoolP("version", "", false, "print version")
-}
-
-func verbosePrint(format string, a ...interface{}) {
-	if verbose {
-		fmt.Printf("🔍 "+format+"\n", a...)
-	}
 }
