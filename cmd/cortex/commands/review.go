@@ -2,7 +2,9 @@ package commands
 
 import (
 	"fmt"
+	"sort"
 
+	"github.com/AdeshDeshmukh/cortex/internal/analyzer"
 	"github.com/AdeshDeshmukh/cortex/internal/git"
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
 	"github.com/spf13/cobra"
@@ -60,10 +62,20 @@ func runReview(cmd *cobra.Command, args []string) error {
 	displayReviewSummary(changes)
 	displayFileBreakdown(changes)
 
+	a := analyzer.NewAnalyzer()
+	suggestions := a.Analyze(changes)
+
+	if len(suggestions) > 0 {
+		displaySuggestions(suggestions)
+	} else {
+		fmt.Println()
+		fmt.Println("✅ No issues found")
+	}
+
 	fmt.Println()
 	fmt.Println("⏳ Analysis pipeline:")
 	fmt.Println("   ✅ Diff parsing complete")
-	fmt.Println("   ⏹️  Static analysis (coming soon)")
+	fmt.Println("   ✅ Static analysis complete")
 	fmt.Println("   ⏹️  LLM suggestions (coming soon)")
 	fmt.Println("   ⏹️  Interactive feedback (coming soon)")
 
@@ -116,4 +128,56 @@ func displayFileBreakdown(changes []types.DiffChange) {
 		}
 		fmt.Println()
 	}
+}
+
+func displaySuggestions(suggestions []types.Suggestion) {
+	fmt.Println()
+	fmt.Println("⚠️  Static Analysis Results:")
+	fmt.Println()
+
+	bySeverity := groupBySeverity(suggestions)
+
+	severityOrder := []string{"critical", "high", "medium", "low"}
+	severityIcons := map[string]string{
+		"critical": "🔴",
+		"high":     "🟠",
+		"medium":   "🟡",
+		"low":      "🔵",
+	}
+
+	for _, severity := range severityOrder {
+		items := bySeverity[severity]
+		if len(items) == 0 {
+			continue
+		}
+
+		icon := severityIcons[severity]
+		fmt.Printf("%s %s severity (%d issue", icon, severity, len(items))
+		if len(items) > 1 {
+			fmt.Print("s")
+		}
+		fmt.Println("):")
+
+		for _, s := range items {
+			fmt.Printf("   • %s\n", s.Message)
+			fmt.Printf("     File: %s\n", s.FilePath)
+		}
+		fmt.Println()
+	}
+}
+
+func groupBySeverity(suggestions []types.Suggestion) map[string][]types.Suggestion {
+	result := make(map[string][]types.Suggestion)
+
+	for _, s := range suggestions {
+		result[s.Severity] = append(result[s.Severity], s)
+	}
+
+	for severity := range result {
+		sort.Slice(result[severity], func(i, j int) bool {
+			return result[severity][i].FilePath < result[severity][j].FilePath
+		})
+	}
+
+	return result
 }

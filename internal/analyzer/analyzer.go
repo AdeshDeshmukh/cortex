@@ -11,13 +11,13 @@ type Analyzer struct {
 }
 
 type Rule struct {
-	ID          string
-	Name        string
-	Pattern     *regexp.Regexp
-	Severity    string
-	Message     string
-	Language    string
-	CheckType   string
+	ID        string
+	Name      string
+	Pattern   *regexp.Regexp
+	Severity  string
+	Message   string
+	Language  string
+	CheckType string
 }
 
 func NewAnalyzer() *Analyzer {
@@ -69,7 +69,7 @@ func getDefaultRules() []Rule {
 		{
 			ID:        "go-error-unchecked",
 			Name:      "Unchecked error",
-			Pattern:   regexp.MustCompile(`\w+\s*:=\s*\w+\([^)]*\)$`),
+			Pattern:   regexp.MustCompile(`\w+\s*:=\s*[\w\.]+\([^)]*\)`),
 			Severity:  "high",
 			Message:   "Function call may return error but result is not checked",
 			Language:  "go",
@@ -78,7 +78,7 @@ func getDefaultRules() []Rule {
 		{
 			ID:        "todo-comment",
 			Name:      "TODO comment",
-			Pattern:   regexp.MustCompile(`//\s*TODO|//\s*FIXME|#\s*TODO|#\s*FIXME`),
+			Pattern:   regexp.MustCompile(`(//|#)\s*(TODO|FIXME)`),
 			Severity:  "medium",
 			Message:   "TODO comment found - consider resolving before commit",
 			Language:  "",
