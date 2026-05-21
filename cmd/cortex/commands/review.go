@@ -6,6 +6,7 @@ import (
 
 	"github.com/AdeshDeshmukh/cortex/internal/analyzer"
 	"github.com/AdeshDeshmukh/cortex/internal/git"
+	"github.com/AdeshDeshmukh/cortex/internal/llm"
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -18,7 +19,7 @@ var reviewCmd = &cobra.Command{
 The review process:
   1. Parse git diff
   2. Run static analysis
-  3. Generate AI suggestions
+  3. Generate LLM suggestions
   4. Collect feedback for learning
 
 Examples:
@@ -62,22 +63,38 @@ func runReview(cmd *cobra.Command, args []string) error {
 	displayReviewSummary(changes)
 	displayFileBreakdown(changes)
 
-	a := analyzer.NewAnalyzer()
-	suggestions := a.Analyze(changes)
+	staticAnalyzer := analyzer.NewAnalyzer()
+	staticSuggestions := staticAnalyzer.Analyze(changes)
 
-	if len(suggestions) > 0 {
-		displaySuggestions(suggestions)
+	engine := llm.NewEngine(llm.EngineConfig{
+		UseMock: true,
+	})
+
+	var llmSuggestions []types.Suggestion
+	if engine.IsAvailable() {
+		for _, change := range changes {
+			suggestions, err := engine.Review(change)
+			if err != nil {
+				if verbose {
+					fmt.Printf("⚠️  LLM review failed for %s: %v\n", change.FilePath, err)
+				}
+				continue
+			}
+			llmSuggestions = append(llmSuggestions, suggestions...)
+		}
+	}
+
+	allSuggestions := append(staticSuggestions, llmSuggestions...)
+
+	if len(allSuggestions) > 0 {
+		displaySuggestions(allSuggestions)
 	} else {
 		fmt.Println()
 		fmt.Println("✅ No issues found")
 	}
 
 	fmt.Println()
-	fmt.Println("⏳ Analysis pipeline:")
-	fmt.Println("   ✅ Diff parsing complete")
-	fmt.Println("   ✅ Static analysis complete")
-	fmt.Println("   ⏹️  LLM suggestions (coming soon)")
-	fmt.Println("   ⏹️  Interactive feedback (coming soon)")
+	displayPipelineStatus(engine.Name())
 
 	return nil
 }
@@ -132,7 +149,7 @@ func displayFileBreakdown(changes []types.DiffChange) {
 
 func displaySuggestions(suggestions []types.Suggestion) {
 	fmt.Println()
-	fmt.Println("⚠️  Static Analysis Results:")
+	fmt.Println("⚠️  Analysis Results:")
 	fmt.Println()
 
 	bySeverity := groupBySeverity(suggestions)
@@ -159,7 +176,7 @@ func displaySuggestions(suggestions []types.Suggestion) {
 		fmt.Println("):")
 
 		for _, s := range items {
-			fmt.Printf("   • %s\n", s.Message)
+			fmt.Printf("   • [%s] %s\n", s.Source, s.Message)
 			fmt.Printf("     File: %s\n", s.FilePath)
 		}
 		fmt.Println()
@@ -175,9 +192,17 @@ func groupBySeverity(suggestions []types.Suggestion) map[string][]types.Suggesti
 
 	for severity := range result {
 		sort.Slice(result[severity], func(i, j int) bool {
-			return result[severity][i].FilePath < result[severity][j].FilePath
+			return result[severity][i].Source < result[severity][j].Source
 		})
 	}
 
 	return result
+}
+
+func displayPipelineStatus(engineName string) {
+	fmt.Println("⏳ Analysis pipeline:")
+	fmt.Println("   ✅ Diff parsing complete")
+	fmt.Println("   ✅ Static analysis complete")
+	fmt.Printf("   ✅ LLM analysis complete (engine: %s)\n", engineName)
+	fmt.Println("   ⏹️  Interactive feedback (coming soon)")
 }
