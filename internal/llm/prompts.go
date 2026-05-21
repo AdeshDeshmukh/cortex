@@ -99,7 +99,7 @@ func (p *PromptBuilder) codeContext(change types.DiffChange) string {
 		sb.WriteString("Removed lines:\n")
 		sb.WriteString("```\n")
 		for _, line := range change.RemovedLines {
-			sb.WriteString("- " + line + "\n")
+			sb.WriteString(fmt.Sprintf("- %s\n", line))
 		}
 		sb.WriteString("```\n\n")
 	}
@@ -114,7 +114,7 @@ func (p *PromptBuilder) codeContext(change types.DiffChange) string {
 		}
 
 		for _, line := range change.AddedLines[:limit] {
-			sb.WriteString("+ " + line + "\n")
+			sb.WriteString(fmt.Sprintf("+ %s\n", line))
 		}
 
 		if len(change.AddedLines) > p.maxLines {
