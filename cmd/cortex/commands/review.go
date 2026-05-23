@@ -7,6 +7,7 @@ import (
 	"github.com/AdeshDeshmukh/cortex/internal/analyzer"
 	"github.com/AdeshDeshmukh/cortex/internal/git"
 	"github.com/AdeshDeshmukh/cortex/internal/llm"
+	"github.com/AdeshDeshmukh/cortex/internal/rl"
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +21,8 @@ The review process:
   1. Parse git diff
   2. Run static analysis
   3. Generate LLM suggestions
-  4. Collect feedback for learning
+  4. Rank with RL
+  5. Display top results
 
 Examples:
   cortex review
@@ -32,7 +34,6 @@ var hookMode bool
 
 func init() {
 	rootCmd.AddCommand(reviewCmd)
-
 	reviewCmd.Flags().BoolVar(&hookMode, "hook", false, "run in hook mode")
 }
 
@@ -75,7 +76,7 @@ func runReview(cmd *cobra.Command, args []string) error {
 		for _, change := range changes {
 			suggestions, err := engine.Review(change)
 			if err != nil {
-				if verbose {
+				if cmd.Flag("verbose").Value.String() == "true" {
 					fmt.Printf("⚠️  LLM review failed for %s: %v\n", change.FilePath, err)
 				}
 				continue
@@ -86,11 +87,30 @@ func runReview(cmd *cobra.Command, args []string) error {
 
 	allSuggestions := append(staticSuggestions, llmSuggestions...)
 
-	if len(allSuggestions) > 0 {
-		displaySuggestions(allSuggestions)
-	} else {
+	if len(allSuggestions) == 0 {
 		fmt.Println()
 		fmt.Println("✅ No issues found")
+	} else {
+		ranker := rl.NewRanker()
+		context := types.ReviewContext{
+			Language: detectDominantLanguage(changes),
+			DiffSize: len(changes),
+		}
+
+		rankedSuggestions, err := ranker.RankSuggestions(allSuggestions, context)
+		if err != nil {
+			if cmd.Flag("verbose").Value.String() == "true" {
+				fmt.Printf("⚠️  RL ranking unavailable: %v\n", err)
+				fmt.Println("   Showing unranked suggestions")
+			}
+			rankedSuggestions = allSuggestions
+		}
+
+		topN := 5
+		if cmd.Flag("verbose").Value.String() == "true" {
+			topN = len(rankedSuggestions)
+		}
+		displayTopSuggestions(rankedSuggestions, topN)
 	}
 
 	fmt.Println()
@@ -132,6 +152,7 @@ func displayReviewSummary(changes []types.DiffChange) {
 		}
 		fmt.Println()
 	}
+
 	fmt.Println()
 }
 
@@ -147,13 +168,51 @@ func displayFileBreakdown(changes []types.DiffChange) {
 	}
 }
 
-func displaySuggestions(suggestions []types.Suggestion) {
+func detectDominantLanguage(changes []types.DiffChange) string {
+	langCount := make(map[string]int)
+	for _, change := range changes {
+		if change.FileType != "unknown" {
+			langCount[change.FileType]++
+		}
+	}
+
+	maxCount := 0
+	dominantLang := "go"
+	for lang, count := range langCount {
+		if count > maxCount {
+			maxCount = count
+			dominantLang = lang
+		}
+	}
+
+	return dominantLang
+}
+
+func displayTopSuggestions(suggestions []types.Suggestion, topN int) {
 	fmt.Println()
-	fmt.Println("⚠️  Analysis Results:")
+
+	if len(suggestions) <= topN {
+		fmt.Printf("⚠️  Analysis Results (all %d suggestion", len(suggestions))
+		if len(suggestions) > 1 {
+			fmt.Print("s")
+		}
+		fmt.Println("):")
+		displaySuggestions(suggestions)
+		return
+	}
+
+	fmt.Printf("⚠️  Analysis Results (showing top %d of %d suggestions):\n", topN, len(suggestions))
+	displaySuggestions(suggestions[:topN])
+
+	fmt.Println()
+	fmt.Printf("💡 Tip: %d more suggestions hidden. Cortex learned your preferences!\n", len(suggestions)-topN)
+	fmt.Println("   Run with --verbose to see all suggestions")
+}
+
+func displaySuggestions(suggestions []types.Suggestion) {
 	fmt.Println()
 
 	bySeverity := groupBySeverity(suggestions)
-
 	severityOrder := []string{"critical", "high", "medium", "low"}
 	severityIcons := map[string]string{
 		"critical": "🔴",
@@ -185,7 +244,6 @@ func displaySuggestions(suggestions []types.Suggestion) {
 
 func groupBySeverity(suggestions []types.Suggestion) map[string][]types.Suggestion {
 	result := make(map[string][]types.Suggestion)
-
 	for _, s := range suggestions {
 		result[s.Severity] = append(result[s.Severity], s)
 	}
@@ -204,5 +262,6 @@ func displayPipelineStatus(engineName string) {
 	fmt.Println("   ✅ Diff parsing complete")
 	fmt.Println("   ✅ Static analysis complete")
 	fmt.Printf("   ✅ LLM analysis complete (engine: %s)\n", engineName)
+	fmt.Println("   ✅ RL ranking complete")
 	fmt.Println("   ⏹️  Interactive feedback (coming soon)")
 }
