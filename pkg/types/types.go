@@ -29,6 +29,7 @@ type Suggestion struct {
 	Message    string
 	FilePath   string
 	LineNumber int
+	Suggestion string
 	Confidence float64
 	CreatedAt  time.Time
 	Source     string
