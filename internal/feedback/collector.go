@@ -11,15 +11,9 @@ import (
 )
 
 type Collector struct {
-	db     *db.DB
-	reader *bufio.Reader
-}
-
-func NewCollector(database *db.DB) *Collector {
-	return &Collector{
-		db:     database,
-		reader: bufio.NewReader(os.Stdin),
-	}
+	db      *db.DB
+	updater *Updater
+	reader  *bufio.Reader
 }
 
 type Stats struct {
@@ -29,7 +23,15 @@ type Stats struct {
 	Total    int
 }
 
-func (c *Collector) CollectFeedback(reviewID int64, suggestions []types.Suggestion) (*Stats, error) {
+func NewCollector(database *db.DB, updater *Updater) *Collector {
+	return &Collector{
+		db:      database,
+		updater: updater,
+		reader:  bufio.NewReader(os.Stdin),
+	}
+}
+
+func (c *Collector) CollectFeedback(reviewID int64, suggestions []types.Suggestion, context types.ReviewContext) (*Stats, error) {
 	stats := &Stats{Total: len(suggestions)}
 
 	if len(suggestions) == 0 {
@@ -42,10 +44,11 @@ func (c *Collector) CollectFeedback(reviewID int64, suggestions []types.Suggesti
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 		fmt.Printf("[%d/%d] %s (%s)\n", i+1, len(suggestions), sugg.Type, sugg.Severity)
 		fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
-
 		fmt.Printf("📍 %s:%d\n", sugg.FilePath, sugg.LineNumber)
 		fmt.Printf("💬 %s\n", sugg.Message)
-		fmt.Printf("💡 %s\n", sugg.Suggestion)
+		if sugg.Suggestion != "" {
+			fmt.Printf("💡 %s\n", sugg.Suggestion)
+		}
 		fmt.Printf("📊 Confidence: %.0f%%\n\n", sugg.Confidence*100)
 
 		suggID, err := c.db.SaveSuggestion(
@@ -69,6 +72,10 @@ func (c *Collector) CollectFeedback(reviewID int64, suggestions []types.Suggesti
 			return stats, fmt.Errorf("save feedback: %w", err)
 		}
 
+		if err := c.updater.RecordFeedback(sugg, action, context); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to update RL model: %v\n", err)
+		}
+
 		switch action {
 		case "accept":
 			stats.Accepted++
@@ -80,6 +87,8 @@ func (c *Collector) CollectFeedback(reviewID int64, suggestions []types.Suggesti
 			stats.Skipped++
 			fmt.Println("⏭️  Skipped")
 		}
+
+		fmt.Println()
 	}
 
 	c.printSummary(stats)
@@ -88,7 +97,7 @@ func (c *Collector) CollectFeedback(reviewID int64, suggestions []types.Suggesti
 }
 
 func (c *Collector) promptUser() (action, reason string) {
-	fmt.Print("✅ Accept  ❌ Reject  ⏭️  Skip  💬 Feedback\n")
+	fmt.Print("✅ Accept   ❌ Reject   ⏭️  Skip   💬 Feedback\n")
 	fmt.Print("> ")
 
 	input, _ := c.reader.ReadString('\n')
@@ -115,8 +124,8 @@ func (c *Collector) printSummary(stats *Stats) {
 	fmt.Printf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n")
 	fmt.Printf("✅ Accepted: %d\n", stats.Accepted)
 	fmt.Printf("❌ Rejected: %d\n", stats.Rejected)
-	fmt.Printf("⏭️  Skipped:  %d\n", stats.Skipped)
-	fmt.Printf("📈 Total:    %d\n\n", stats.Total)
+	fmt.Printf("⏭️  Skipped: %d\n", stats.Skipped)
+	fmt.Printf("📈 Total: %d\n\n", stats.Total)
 
 	if stats.Total > 0 {
 		acceptRate := float64(stats.Accepted) / float64(stats.Total) * 100

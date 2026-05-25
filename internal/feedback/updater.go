@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/AdeshDeshmukh/cortex/internal/utils"
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
 )
 
@@ -18,8 +19,8 @@ type Updater struct {
 
 type updatePayload struct {
 	Context        updateContext `json:"context"`
-	SuggestionType string       `json:"suggestion_type"`
-	Action         string       `json:"action"`
+	SuggestionType string        `json:"suggestion_type"`
+	Action         string        `json:"action"`
 }
 
 type updateContext struct {
@@ -31,7 +32,7 @@ type updateContext struct {
 
 func NewUpdater() *Updater {
 	return &Updater{
-		pythonPath: "/opt/homebrew/bin/python3",
+		pythonPath: utils.DetectPython(),
 		scriptPath: "python/bandit/linucb.py",
 	}
 }
@@ -79,14 +80,12 @@ func (u *Updater) callPythonUpdate(payload updatePayload) error {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
 
-	// Find the project root by looking for go.mod
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
 
 	scriptPath := u.scriptPath
-	// If relative path doesn't exist, try to find it from project root
 	if _, err := os.Stat(scriptPath); err != nil {
 		projectRoot := cwd
 		for projectRoot != "/" {
@@ -99,7 +98,6 @@ func (u *Updater) callPythonUpdate(payload updatePayload) error {
 	}
 
 	cmd := exec.Command(u.pythonPath, scriptPath, "update")
-
 	cmd.Stdin = bytes.NewReader(inputJSON)
 
 	var stdout, stderr bytes.Buffer

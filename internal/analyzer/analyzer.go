@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"regexp"
 
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
@@ -30,16 +31,19 @@ func (a *Analyzer) Analyze(changes []types.DiffChange) []types.Suggestion {
 	var suggestions []types.Suggestion
 
 	for _, change := range changes {
+		currentLine := change.StartLine
+
 		for _, addedLine := range change.AddedLines {
-			lineSuggestions := a.checkLine(addedLine, change.FilePath, change.FileType)
+			lineSuggestions := a.checkLine(addedLine, change.FilePath, change.FileType, currentLine)
 			suggestions = append(suggestions, lineSuggestions...)
+			currentLine++
 		}
 	}
 
-	return suggestions
+	return deduplicateSuggestions(suggestions)
 }
 
-func (a *Analyzer) checkLine(line, filePath, fileType string) []types.Suggestion {
+func (a *Analyzer) checkLine(line, filePath, fileType string, lineNumber int) []types.Suggestion {
 	var suggestions []types.Suggestion
 
 	for _, rule := range a.rules {
@@ -54,7 +58,7 @@ func (a *Analyzer) checkLine(line, filePath, fileType string) []types.Suggestion
 				Severity:   rule.Severity,
 				Message:    rule.Message,
 				FilePath:   filePath,
-				LineNumber: 0,
+				LineNumber: lineNumber,
 				Confidence: 0.8,
 				Source:     "static",
 			})
@@ -62,6 +66,22 @@ func (a *Analyzer) checkLine(line, filePath, fileType string) []types.Suggestion
 	}
 
 	return suggestions
+}
+
+func deduplicateSuggestions(suggestions []types.Suggestion) []types.Suggestion {
+	seen := make(map[string]bool)
+	unique := make([]types.Suggestion, 0, len(suggestions))
+
+	for _, s := range suggestions {
+		key := fmt.Sprintf("%s:%d:%s", s.FilePath, s.LineNumber, s.Type)
+
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, s)
+		}
+	}
+
+	return unique
 }
 
 func getDefaultRules() []Rule {

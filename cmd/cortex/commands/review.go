@@ -5,9 +5,11 @@ import (
 	"sort"
 
 	"github.com/AdeshDeshmukh/cortex/internal/analyzer"
+	"github.com/AdeshDeshmukh/cortex/internal/feedback"
 	"github.com/AdeshDeshmukh/cortex/internal/git"
 	"github.com/AdeshDeshmukh/cortex/internal/llm"
 	"github.com/AdeshDeshmukh/cortex/internal/rl"
+	"github.com/AdeshDeshmukh/cortex/pkg/db"
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +25,8 @@ The review process:
   3. Generate LLM suggestions
   4. Rank with RL
   5. Display top results
+  6. Collect feedback
+  7. Update RL model
 
 Examples:
   cortex review
@@ -90,33 +94,67 @@ func runReview(cmd *cobra.Command, args []string) error {
 	if len(allSuggestions) == 0 {
 		fmt.Println()
 		fmt.Println("✅ No issues found")
-	} else {
-		ranker := rl.NewRanker()
-		context := types.ReviewContext{
-			Language: detectDominantLanguage(changes),
-			DiffSize: len(changes),
-		}
+		fmt.Println()
+		displayPipelineStatus(engine.Name())
+		return nil
+	}
 
-		rankedSuggestions, err := ranker.RankSuggestions(allSuggestions, context)
-		if err != nil {
-			if cmd.Flag("verbose").Value.String() == "true" {
-				fmt.Printf("⚠️  RL ranking unavailable: %v\n", err)
-				fmt.Println("   Showing unranked suggestions")
-			}
-			rankedSuggestions = allSuggestions
-		}
+	ranker := rl.NewRanker()
+	context := types.ReviewContext{
+		Language: detectDominantLanguage(changes),
+		DiffSize: len(changes),
+	}
 
-		topN := 5
+	rankedSuggestions, err := ranker.RankSuggestions(allSuggestions, context)
+	if err != nil {
 		if cmd.Flag("verbose").Value.String() == "true" {
-			topN = len(rankedSuggestions)
+			fmt.Printf("⚠️  RL ranking unavailable: %v\n", err)
+			fmt.Println("   Showing unranked suggestions")
 		}
-		displayTopSuggestions(rankedSuggestions, topN)
+		rankedSuggestions = allSuggestions
+	}
+
+	topN := 5
+	if cmd.Flag("verbose").Value.String() == "true" {
+		topN = len(rankedSuggestions)
+	}
+
+	displayTopSuggestions(rankedSuggestions, topN)
+
+	repoRoot, err := git.GetRepoRoot()
+	if err != nil {
+		return fmt.Errorf("get repo root: %w", err)
+	}
+
+	database, err := db.New(repoRoot)
+	if err != nil {
+		return fmt.Errorf("initialize database: %w", err)
+	}
+	defer database.Close()
+
+	reviewID, err := database.SaveReview("", repoRoot, context.Language, context.DiffSize, 0)
+	if err != nil {
+		return fmt.Errorf("save review: %w", err)
+	}
+
+	updater := feedback.NewUpdater()
+	collector := feedback.NewCollector(database, updater)
+
+	if _, err := collector.CollectFeedback(reviewID, rankedSuggestions[:min(topN, len(rankedSuggestions))], context); err != nil {
+		return fmt.Errorf("collect feedback: %w", err)
 	}
 
 	fmt.Println()
 	displayPipelineStatus(engine.Name())
 
 	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func displayReviewSummary(changes []types.DiffChange) {
@@ -136,12 +174,12 @@ func displayReviewSummary(changes []types.DiffChange) {
 	}
 
 	fmt.Println("📊 Summary:")
-	fmt.Printf("   Files changed:  %d\n", len(changes))
-	fmt.Printf("   Lines added:    +%d\n", totalAdded)
-	fmt.Printf("   Lines removed:  -%d\n", totalRemoved)
+	fmt.Printf("   Files changed: %d\n", len(changes))
+	fmt.Printf("   Lines added: +%d\n", totalAdded)
+	fmt.Printf("   Lines removed: -%d\n", totalRemoved)
 
 	if len(languages) > 0 {
-		fmt.Print("   Languages:      ")
+		fmt.Print("   Languages: ")
 		first := true
 		for lang, count := range languages {
 			if !first {
@@ -190,7 +228,6 @@ func detectDominantLanguage(changes []types.DiffChange) string {
 
 func displayTopSuggestions(suggestions []types.Suggestion, topN int) {
 	fmt.Println()
-
 	if len(suggestions) <= topN {
 		fmt.Printf("⚠️  Analysis Results (all %d suggestion", len(suggestions))
 		if len(suggestions) > 1 {
@@ -203,7 +240,6 @@ func displayTopSuggestions(suggestions []types.Suggestion, topN int) {
 
 	fmt.Printf("⚠️  Analysis Results (showing top %d of %d suggestions):\n", topN, len(suggestions))
 	displaySuggestions(suggestions[:topN])
-
 	fmt.Println()
 	fmt.Printf("💡 Tip: %d more suggestions hidden. Cortex learned your preferences!\n", len(suggestions)-topN)
 	fmt.Println("   Run with --verbose to see all suggestions")
@@ -211,8 +247,8 @@ func displayTopSuggestions(suggestions []types.Suggestion, topN int) {
 
 func displaySuggestions(suggestions []types.Suggestion) {
 	fmt.Println()
-
 	bySeverity := groupBySeverity(suggestions)
+
 	severityOrder := []string{"critical", "high", "medium", "low"}
 	severityIcons := map[string]string{
 		"critical": "🔴",
@@ -238,6 +274,7 @@ func displaySuggestions(suggestions []types.Suggestion) {
 			fmt.Printf("   • [%s] %s\n", s.Source, s.Message)
 			fmt.Printf("     File: %s\n", s.FilePath)
 		}
+
 		fmt.Println()
 	}
 }
@@ -263,5 +300,5 @@ func displayPipelineStatus(engineName string) {
 	fmt.Println("   ✅ Static analysis complete")
 	fmt.Printf("   ✅ LLM analysis complete (engine: %s)\n", engineName)
 	fmt.Println("   ✅ RL ranking complete")
-	fmt.Println("   ⏹️  Interactive feedback (coming soon)")
+	fmt.Println("   ✅ Interactive feedback complete")
 }

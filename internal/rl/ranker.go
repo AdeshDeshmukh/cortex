@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"sort"
 
+	"github.com/AdeshDeshmukh/cortex/internal/utils"
 	"github.com/AdeshDeshmukh/cortex/pkg/types"
 )
 
@@ -16,10 +17,10 @@ type Ranker struct {
 }
 
 type linucbContext struct {
-	Language   string `json:"language"`
-	FileType   string `json:"file_type"`
-	DiffSize   int    `json:"diff_size"`
-	TimeOfDay  int    `json:"time_of_day"`
+	Language  string `json:"language"`
+	FileType  string `json:"file_type"`
+	DiffSize  int    `json:"diff_size"`
+	TimeOfDay int    `json:"time_of_day"`
 }
 
 type predictRequest struct {
@@ -36,7 +37,7 @@ type scoreResponse map[string]float64
 
 func NewRanker() *Ranker {
 	return &Ranker{
-		pythonPath: "python3",
+		pythonPath: utils.DetectPython(),
 		scriptPath: "python/bandit/linucb.py",
 	}
 }
@@ -47,7 +48,6 @@ func (r *Ranker) RankSuggestions(suggestions []types.Suggestion, context types.R
 	}
 
 	ctx := r.extractContext(context, suggestions)
-
 	suggForRanking := make([]suggestionForRanking, len(suggestions))
 	for i, s := range suggestions {
 		suggForRanking[i] = suggestionForRanking{
@@ -85,7 +85,6 @@ func (r *Ranker) callPython(command string, data interface{}) (scoreResponse, er
 	}
 
 	cmd := exec.Command(r.pythonPath, r.scriptPath, command)
-
 	cmd.Stdin = bytes.NewReader(inputJSON)
 
 	var stdout, stderr bytes.Buffer
